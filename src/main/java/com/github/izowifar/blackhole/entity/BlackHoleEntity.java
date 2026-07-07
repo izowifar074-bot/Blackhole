@@ -2,6 +2,7 @@ package com.github.izowifar.blackhole.entity;
 
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.BlockParticleOption;
+import net.minecraft.core.particles.ColorParticleOption;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
@@ -269,7 +270,8 @@ public class BlackHoleEntity extends Entity {
         }
 
         serverLevel.sendParticles(ParticleTypes.EXPLOSION_EMITTER, c.x, c.y, c.z, 8, 2.5, 2.5, 2.5, 0.0);
-        serverLevel.sendParticles(ParticleTypes.FLASH, c.x, c.y, c.z, 3, 0.5, 0.5, 0.5, 0.0);
+        serverLevel.sendParticles(ColorParticleOption.create(ParticleTypes.FLASH, 1.0f, 0.9f, 0.7f),
+                c.x, c.y, c.z, 3, 0.5, 0.5, 0.5, 0.0);
         for (int i = 0; i < 16; i++) {
             double ang = Math.PI * 2.0 * i / 16.0;
             serverLevel.sendParticles(ParticleTypes.SONIC_BOOM,

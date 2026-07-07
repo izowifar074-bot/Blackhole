@@ -3,6 +3,7 @@ package com.github.izowifar.blackhole.item;
 import com.github.izowifar.blackhole.BlackholeMod;
 import com.github.izowifar.blackhole.entity.BlackHoleEntity;
 
+import net.minecraft.core.particles.ColorParticleOption;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
@@ -48,7 +49,8 @@ public class BlackHoleItem extends Item {
 
             serverLevel.sendParticles(ParticleTypes.REVERSE_PORTAL,
                     spot.x, spot.y, spot.z, 120, 1.6, 1.6, 1.6, 0.6);
-            serverLevel.sendParticles(ParticleTypes.FLASH, spot.x, spot.y, spot.z, 1, 0, 0, 0, 0);
+            serverLevel.sendParticles(ColorParticleOption.create(ParticleTypes.FLASH, 1.0f, 1.0f, 1.0f),
+                    spot.x, spot.y, spot.z, 1, 0, 0, 0, 0);
             level.playSound(null, spot.x, spot.y, spot.z,
                     SoundEvents.END_PORTAL_SPAWN, SoundSource.NEUTRAL, 2.0f, 0.55f);
 
