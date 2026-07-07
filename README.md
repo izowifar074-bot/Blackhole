@@ -1,6 +1,6 @@
 # Black Hole（黑洞）
 
-一个 **Minecraft Java 版 1.21.10 / Fabric** 模组：右键使用「奇点核心」，在视线落点撕开一个黑洞。它从零开始膨胀，停滞期间吞噬周围的方块与实体，最后剧烈坍缩并爆炸。
+一个 **Minecraft Java 版 1.21.11 / Fabric** 模组：右键使用「奇点核心」，在视线落点撕开一个黑洞。它从零开始膨胀，停滞期间吞噬周围的方块与实体，最后剧烈坍缩并爆炸。
 
 ## 效果
 
@@ -40,7 +40,7 @@
 ./gradlew runClient
 ```
 
-依赖：Fabric Loader ≥ 0.17.2、Fabric API（开发时使用 `0.138.4+1.21.10`）。
+依赖：Fabric Loader ≥ 0.18.1、Fabric API（开发时使用 `0.140.0+1.21.11`）。
 
 ## 调参
 
@@ -57,7 +57,7 @@
 
 ## 技术说明
 
-- 面向 1.21.9/1.21.10 的**提交式渲染管线**编写：实体渲染器实现 `submit(state, PoseStack, SubmitNodeCollector, CameraRenderState)`，自定义几何通过 `SubmitNodeCollector#submitCustomGeometry` 写入 `VertexConsumer`。
-- 发光层复用原版 `RenderType.lightning()`（位置-颜色顶点格式、加色混合），黑球体使用 `RenderType.entitySolid` + 自带的纯白贴图。
+- 面向 1.21.9+ 的**提交式渲染管线**编写：实体渲染器实现 `submit(state, PoseStack, SubmitNodeCollector, CameraRenderState)`，自定义几何通过 `SubmitNodeCollector#submitCustomGeometry` 写入 `VertexConsumer`。
+- 已按 1.21.11 的改名调整：`ResourceLocation` → `Identifier`；原版渲染类型的静态成员移到 `net.minecraft.client.renderer.rendertype.RenderTypes`（发光层用 `RenderTypes.lightning()` 位置-颜色加色混合，黑球体用 `RenderTypes.entitySolid` + 自带的纯白贴图）。
 - 实体存档使用 1.21.6+ 的 `ValueInput` / `ValueOutput`；物品注册使用 1.21.4+ 的 `Properties#setId`。
-- 本仓库在无法访问 Mojang/Fabric 下载源的沙箱中编写，**未经过实际编译验证**。若快照间有小幅 API 漂移，最可能需要微调的位置是：`BlackHoleRenderer` 中 `SubmitNodeCollector` / `CameraRenderState` 的导入路径，以及 `EntityRenderer#shouldRender` 的签名——均为局部小改。
+- 本仓库在无法访问 Mojang/Fabric 下载源的沙箱中编写，**未经过实际编译验证**。代码已逐项对照 NeoForge 的 1.21.10→1.21.11 迁移指南核对；若仍有小幅 API 漂移，最可能需要微调的位置是：`BlackHoleRenderer` 中 `SubmitNodeCollector` / `CameraRenderState` / `RenderTypes` 的导入路径，以及 `EntityRenderer#shouldRender` 的签名——均为局部小改。

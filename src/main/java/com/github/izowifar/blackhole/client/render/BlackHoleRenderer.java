@@ -9,14 +9,14 @@ import com.mojang.math.Axis;
 import org.joml.Quaternionf;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.renderer.entity.EntityRenderer;
 import net.minecraft.client.renderer.entity.EntityRendererProvider;
+import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.client.renderer.state.CameraRenderState;
 import net.minecraft.client.renderer.texture.OverlayTexture;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 
 /**
@@ -35,12 +35,12 @@ import net.minecraft.util.Mth;
  *       brightness surge during the final collapse.</li>
  * </ol>
  *
- * All glow layers use {@link RenderType#lightning()} (position-color, additive
+ * All glow layers use {@link RenderTypes#lightning()} (position-color, additive
  * blending), so they bloom naturally over each other without textures.
  */
 public class BlackHoleRenderer extends EntityRenderer<BlackHoleEntity, BlackHoleRenderState> {
-    private static final ResourceLocation WHITE_TEXTURE =
-            ResourceLocation.fromNamespaceAndPath(BlackholeMod.MOD_ID, "textures/misc/white.png");
+    private static final Identifier WHITE_TEXTURE =
+            Identifier.fromNamespaceAndPath(BlackholeMod.MOD_ID, "textures/misc/white.png");
     private static final int FULL_BRIGHT = 0xF000F0;
     private static final float TAU = (float) (Math.PI * 2.0);
 
@@ -106,15 +106,16 @@ public class BlackHoleRenderer extends EntityRenderer<BlackHoleEntity, BlackHole
         // 1. Event horizon
         float pulse = 1.0f + 0.05f * collapse * Mth.sin(t * 5.0f);
         float sphereRadius = radius * 0.98f * pulse;
-        collector.submitCustomGeometry(poseStack, RenderType.entitySolid(WHITE_TEXTURE),
+        collector.submitCustomGeometry(poseStack, RenderTypes.entitySolid(WHITE_TEXTURE),
                 (pose, consumer) -> emitSphere(pose, consumer, sphereRadius));
 
         // 2 + 3 + 5. Camera-facing glow: photon ring, halo, birth flash
-        Quaternionf cameraRotation = Minecraft.getInstance().gameRenderer.getMainCamera().rotation();
+        Quaternionf cameraRotation =
+                new Quaternionf(Minecraft.getInstance().gameRenderer.getMainCamera().rotation());
         poseStack.pushPose();
         poseStack.mulPose(cameraRotation);
         float ringBoost = 1.0f + 1.6f * collapse;
-        collector.submitCustomGeometry(poseStack, RenderType.lightning(), (pose, consumer) -> {
+        collector.submitCustomGeometry(poseStack, RenderTypes.lightning(), (pose, consumer) -> {
             emitPhotonRing(pose, consumer, radius, ringBoost);
             emitBirthFlash(pose, consumer, t);
         });
@@ -125,7 +126,7 @@ public class BlackHoleRenderer extends EntityRenderer<BlackHoleEntity, BlackHole
         poseStack.mulPose(Axis.YP.rotation(state.precessionOffset + t * 0.004f));
         poseStack.mulPose(Axis.XP.rotationDegrees(state.tiltDegrees));
         float diskBoost = 1.0f + 0.8f * collapse;
-        collector.submitCustomGeometry(poseStack, RenderType.lightning(),
+        collector.submitCustomGeometry(poseStack, RenderTypes.lightning(),
                 (pose, consumer) -> emitAccretionDisk(pose, consumer, radius, t, diskBoost));
         poseStack.popPose();
 
