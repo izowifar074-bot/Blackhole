@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "blackhole",
+  "version": "${version}",
+  "name": "Black Hole",
+  "description": "Tear open a growing black hole where you look: a pitch-black event horizon wrapped in a blazing photon ring and a Keplerian accretion disk. It devours blocks and entities, then collapses and detonates.",
+  "authors": [
+    "izowifar074-bot"
+  ],
+  "license": "MIT",
+  "icon": "assets/blackhole/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.github.izowifar.blackhole.BlackholeMod"
+    ],
+    "client": [
+      "com.github.izowifar.blackhole.client.BlackholeClient"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.17.2",
+    "fabric-api": "*",
+    "minecraft": "~1.21.9",
+    "java": ">=21"
+  }
+}
