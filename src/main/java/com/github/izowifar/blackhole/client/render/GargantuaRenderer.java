@@ -118,6 +118,20 @@ public class GargantuaRenderer extends EntityRenderer<GargantuaEntity, Gargantua
         float doppler = dopplerAmpAt(t);
         float blaze = blazeAt(t);
         float flash = flashAlphaAt(t);
+        float darkness = darknessAt(t);
+
+        // 0. sky-darkening dome centered on the camera, farther out than the
+        // hole so depth keeps every other layer visible in front of it; only
+        // the sky and the far horizon fall into night
+        if (darkness > 0.003f) {
+            int domeAlpha = (int) (255 * Math.min(1.0f, darkness));
+            float domeRadius = dist * 1.15f;
+            poseStack.pushPose();
+            poseStack.translate(camPos.x - state.anchorX, camPos.y - state.anchorY, camPos.z - state.anchorZ);
+            collector.submitCustomGeometry(poseStack, RenderTypes.entityTranslucentEmissive(WHITE_TEXTURE),
+                    (pose, vc) -> emitSphere(pose, vc, domeRadius, 2, 3, 8, domeAlpha));
+            poseStack.popPose();
+        }
 
         poseStack.pushPose();
         poseStack.translate(anchor.x - state.anchorX, anchor.y - state.anchorY, anchor.z - state.anchorZ);
@@ -146,7 +160,7 @@ public class GargantuaRenderer extends EntityRenderer<GargantuaEntity, Gargantua
 
         // 2. the event horizon
         collector.submitCustomGeometry(poseStack, RenderTypes.entitySolid(WHITE_TEXTURE),
-                (pose, vc) -> emitSphere(pose, vc, r * 0.995f));
+                (pose, vc) -> emitSphere(pose, vc, r * 0.995f, 1, 1, 3, 255));
 
         // 3 + 4. granular accretion disk and the lensed halo
         collector.submitCustomGeometry(poseStack, RenderTypes.entityTranslucentEmissive(STRIP_TEXTURE),
@@ -221,6 +235,13 @@ public class GargantuaRenderer extends EntityRenderer<GargantuaEntity, Gargantua
         return phase(t, 700.0f, GargantuaEntity.FLASH_PEAK);
     }
 
+    private static float darknessAt(float t) {
+        float in = phase(t, 40.0f, GargantuaEntity.APPROACH_END * 0.6f) * 0.72f
+                + phase(t, GargantuaEntity.APPROACH_END, GargantuaEntity.DOMINANCE_END) * 0.13f;
+        float out = 1.0f - phase(t, GargantuaEntity.FLASH_PEAK + 20.0f, GargantuaEntity.LIFETIME);
+        return in * out;
+    }
+
     private static float flashAlphaAt(float t) {
         if (t < GargantuaEntity.DOMINANCE_END) {
             return 0.0f;
@@ -272,13 +293,14 @@ public class GargantuaRenderer extends EntityRenderer<GargantuaEntity, Gargantua
         };
     }
 
-    private static void emitSphere(PoseStack.Pose pose, VertexConsumer vc, float radius) {
+    private static void emitSphere(PoseStack.Pose pose, VertexConsumer vc, float radius,
+            int red, int green, int blue, int alpha) {
         for (int i = 0; i < SPHERE.length; i += 3) {
             float x = SPHERE[i];
             float y = SPHERE[i + 1];
             float z = SPHERE[i + 2];
             vc.addVertex(pose, x * radius, y * radius, z * radius)
-                    .setColor(1, 1, 3, 255)
+                    .setColor(red, green, blue, alpha)
                     .setUv(0.5f, 0.5f)
                     .setOverlay(OverlayTexture.NO_OVERLAY)
                     .setLight(FULL_BRIGHT)

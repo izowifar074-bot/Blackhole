@@ -5,13 +5,10 @@ import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.util.Mth;
 import net.minecraft.world.damagesource.DamageSource;
-import net.minecraft.world.effect.MobEffectInstance;
-import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.Player;
@@ -97,15 +94,6 @@ public class GargantuaEntity extends Entity {
         this.age++;
         if (this.age == 1 || this.age % 10 == 0) {
             this.entityData.set(DATA_AGE, this.age);
-        }
-
-        // The world darkens while the hole hangs overhead
-        if (this.age % 40 == 0 && this.age < DEVOUR_TICK) {
-            for (ServerPlayer player : serverLevel.players()) {
-                if (player.distanceToSqr(this) < DEVOUR_RANGE * DEVOUR_RANGE) {
-                    player.addEffect(new MobEffectInstance(MobEffects.DARKNESS, 120, 0, false, false));
-                }
-            }
         }
 
         if (this.age == 1) {
