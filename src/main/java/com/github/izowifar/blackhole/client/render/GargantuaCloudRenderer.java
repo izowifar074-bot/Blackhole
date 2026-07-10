@@ -31,6 +31,7 @@ import org.joml.Vector4f;
 import org.lwjgl.system.MemoryUtil;
 
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.world.WorldExtractionContext;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldRenderEvents;
 import net.minecraft.client.Minecraft;
@@ -43,12 +44,9 @@ import net.minecraft.world.phys.Vec3;
 /**
  * GPU material pass for the Eye of Gargantua.
  *
- * <p>A single camera-facing world quad carries the whole procedural image. Its
- * fragment shader is the Minecraft port of the approved "cinematic balance"
- * WebGL prototype: polar Keplerian flow, five-octave domain-warped clouds,
- * filament-bound grains, Doppler colour separation, a lensed halo and a soft
- * in-shader bloom approximation. Keeping the material in one pass also avoids
- * the perspective seams and giant texture hoops produced by stacked annuli.
+ * <p>World/entity data is captured during Fabric's extraction phase and only
+ * immutable frame data is consumed by the GPU drawing phase. This is required
+ * by the split renderer used by Minecraft 1.21.11.
  */
 public final class GargantuaCloudRenderer implements AutoCloseable {
     private static final float ELEVATION_DEG = 26.0f;
@@ -64,7 +62,7 @@ public final class GargantuaCloudRenderer implements AutoCloseable {
                     .withBlend(BlendFunction.TRANSLUCENT)
                     .withCull(false)
                     .withDepthWrite(false)
-                    .withDepthTestFunction(DepthTestFunction.LEQUAL_DEPTH_TEST)
+                    .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
                     .build());
 
     private static final Vector4f COLOR_MODULATOR = new Vector4f(1.0f, 1.0f, 1.0f, 1.0f);
@@ -76,10 +74,8 @@ public final class GargantuaCloudRenderer implements AutoCloseable {
     private static final GargantuaCloudRenderer INSTANCE = new GargantuaCloudRenderer();
 
     private final ByteBufferBuilder allocator = new ByteBufferBuilder(RenderType.SMALL_BUFFER_SIZE);
-    private final MappableRingBuffer paramsBuffer = new MappableRingBuffer(
-            () -> "blackhole gargantua material parameters",
-            GpuBuffer.USAGE_UNIFORM | GpuBuffer.USAGE_MAP_WRITE,
-            PARAM_BYTES);
+    private volatile FrameState frameState;
+    private MappableRingBuffer paramsBuffer;
     private BufferBuilder buffer;
     private MappableRingBuffer vertexBuffer;
 
@@ -87,19 +83,22 @@ public final class GargantuaCloudRenderer implements AutoCloseable {
     }
 
     public static void register() {
-        WorldRenderEvents.BEFORE_TRANSLUCENT.register(INSTANCE::render);
+        WorldRenderEvents.END_EXTRACTION.register(INSTANCE::extract);
+        WorldRenderEvents.END_MAIN.register(INSTANCE::render);
         ClientLifecycleEvents.CLIENT_STOPPING.register(client -> INSTANCE.close());
     }
 
-    private void render(WorldRenderContext context) {
+    private void extract(WorldExtractionContext context) {
         Minecraft client = Minecraft.getInstance();
-        if (client.level == null || client.player == null) {
+        if (client.player == null) {
+            this.frameState = null;
             return;
         }
 
-        List<GargantuaEntity> events = client.level.getEntitiesOfClass(
+        List<GargantuaEntity> events = context.world().getEntitiesOfClass(
                 GargantuaEntity.class, client.player.getBoundingBox().inflate(512.0));
         if (events.isEmpty()) {
+            this.frameState = null;
             return;
         }
 
@@ -115,35 +114,20 @@ public final class GargantuaCloudRenderer implements AutoCloseable {
         float t = entity.getAgeTicks();
         float angleDeg = GargantuaEntity.apparentAngleAt(t);
         if (angleDeg < 0.05f) {
+            this.frameState = null;
             return;
         }
 
-        float distance = Mth.clamp(client.options.getEffectiveRenderDistance() * 16.0f * 0.7f, 64.0f, 300.0f);
+        float distance = Mth.clamp(client.options.getEffectiveRenderDistance() * 16.0f * 0.7f,
+                64.0f, 300.0f);
         float shadowRadius = distance * (float) Math.tan(Math.toRadians(angleDeg));
-
-        Vec3 camera = context.worldState().cameraRenderState.pos;
         float yaw = (float) Math.toRadians(entity.getYRot());
         float elevation = (float) Math.toRadians(ELEVATION_DEG);
         Vec3 sight = new Vec3(-Mth.sin(yaw) * Mth.cos(elevation), Mth.sin(elevation),
                 Mth.cos(yaw) * Mth.cos(elevation));
-        Vec3 center = camera.add(sight.scale(distance));
+        Vec3 center = sight.scale(distance);
         Vec3 right = new Vec3(0.0, 1.0, 0.0).cross(sight).normalize();
         Vec3 up = sight.cross(right).normalize();
-
-        PoseStack matrices = context.matrices();
-        matrices.pushPose();
-        matrices.translate(-camera.x, -camera.y, -camera.z);
-        if (this.buffer == null) {
-            this.buffer = new BufferBuilder(this.allocator, PIPELINE.getVertexFormatMode(), PIPELINE.getVertexFormat());
-        }
-        emitQuad(matrices.last().pose(), this.buffer, center, right, up, shadowRadius * QUAD_RADIUS);
-        matrices.popPose();
-
-        MeshData mesh = this.buffer.buildOrThrow();
-        this.buffer = null;
-        MeshData.DrawState drawState = mesh.drawState();
-        VertexFormat format = drawState.format();
-        GpuBuffer vertices = upload(mesh, drawState, format);
 
         float opening = openingAt(t);
         float divider = dividerAt(t);
@@ -155,19 +139,57 @@ public final class GargantuaCloudRenderer implements AutoCloseable {
         float opacity = phase(t, 0.0f, GargantuaEntity.EMERGE_END);
         float materialTime = (float) (System.nanoTime() * 1.0e-9);
 
-        this.paramsBuffer.rotate();
-        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-        try (GpuBuffer.MappedView view = encoder.mapBuffer(this.paramsBuffer.currentBuffer(), false, true)) {
-            Std140Builder.intoBuffer(view.data())
-                    // Approved WebGL "cinematic balance" preset.
-                    .putVec4(materialTime, 1.08f, 0.78f, 0.64f)
-                    .putVec4(0.62f, 0.46f, doppler, 1.04f)
-                    .putVec4(opening, divider, roll, brightness)
-                    .putVec4(blaze, 1.18f, opacity, 0.0f);
+        this.frameState = new FrameState(center, right, up, shadowRadius,
+                materialTime, opening, divider, roll, brightness, doppler, blaze, opacity);
+    }
+
+    private void render(WorldRenderContext context) {
+        FrameState frame = this.frameState;
+        if (frame == null) {
+            return;
         }
 
-        draw(client, mesh, drawState, vertices, format);
+        PoseStack matrices = context.matrices();
+        matrices.pushPose();
+        if (this.buffer == null) {
+            this.buffer = new BufferBuilder(this.allocator,
+                    PIPELINE.getVertexFormatMode(), PIPELINE.getVertexFormat());
+        }
+        emitQuad(matrices.last().pose(), this.buffer, frame.center(), frame.right(), frame.up(),
+                frame.shadowRadius() * QUAD_RADIUS);
+        matrices.popPose();
+
+        MeshData mesh = this.buffer.buildOrThrow();
+        this.buffer = null;
+        MeshData.DrawState drawState = mesh.drawState();
+        VertexFormat format = drawState.format();
+        GpuBuffer vertices = upload(mesh, drawState, format);
+
+        MappableRingBuffer params = paramsBuffer();
+        params.rotate();
+        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+        try (GpuBuffer.MappedView view = encoder.mapBuffer(params.currentBuffer(), false, true)) {
+            Std140Builder.intoBuffer(view.data())
+                    // Approved WebGL "cinematic balance" preset.
+                    .putVec4(frame.materialTime(), 1.08f, 0.78f, 0.64f)
+                    .putVec4(0.62f, 0.46f, frame.doppler(), 1.04f)
+                    .putVec4(frame.opening(), frame.divider(), frame.roll(), frame.brightness())
+                    .putVec4(frame.blaze(), 1.18f, frame.opacity(), 0.0f);
+        }
+
+        draw(Minecraft.getInstance(), mesh, drawState, vertices, format, params);
         this.vertexBuffer.rotate();
+    }
+
+    /** Create GPU state only after Minecraft has initialized its render device. */
+    private MappableRingBuffer paramsBuffer() {
+        if (this.paramsBuffer == null) {
+            this.paramsBuffer = new MappableRingBuffer(
+                    () -> "blackhole gargantua material parameters",
+                    GpuBuffer.USAGE_UNIFORM | GpuBuffer.USAGE_MAP_WRITE,
+                    PARAM_BYTES);
+        }
+        return this.paramsBuffer;
     }
 
     private GpuBuffer upload(MeshData mesh, MeshData.DrawState drawState, VertexFormat format) {
@@ -191,7 +213,7 @@ public final class GargantuaCloudRenderer implements AutoCloseable {
     }
 
     private void draw(Minecraft client, MeshData mesh, MeshData.DrawState drawState,
-            GpuBuffer vertices, VertexFormat format) {
+            GpuBuffer vertices, VertexFormat format, MappableRingBuffer params) {
         GpuBuffer indices;
         VertexFormat.IndexType indexType;
         if (PIPELINE.getVertexFormatMode() == VertexFormat.Mode.QUADS) {
@@ -214,7 +236,7 @@ public final class GargantuaCloudRenderer implements AutoCloseable {
             pass.setPipeline(PIPELINE);
             RenderSystem.bindDefaultUniforms(pass);
             pass.setUniform("DynamicTransforms", transforms);
-            pass.setUniform("GargantuaParams", this.paramsBuffer.currentBuffer());
+            pass.setUniform("GargantuaParams", params.currentBuffer());
             pass.setVertexBuffer(0, vertices);
             pass.setIndexBuffer(indices, indexType);
             pass.drawIndexed(0 / format.getVertexSize(), 0, drawState.indexCount(), 1);
@@ -259,9 +281,11 @@ public final class GargantuaCloudRenderer implements AutoCloseable {
             return 0.035f;
         }
         if (t < GargantuaEntity.SWING_END) {
-            return Mth.lerp(phase(t, GargantuaEntity.PLANE_END, GargantuaEntity.SWING_END), 0.035f, 0.48f);
+            return Mth.lerp(phase(t, GargantuaEntity.PLANE_END, GargantuaEntity.SWING_END),
+                    0.035f, 0.48f);
         }
-        return Mth.lerp(phase(t, GargantuaEntity.SWING_END, GargantuaEntity.SETTLE_END), 0.48f, 0.040f);
+        return Mth.lerp(phase(t, GargantuaEntity.SWING_END, GargantuaEntity.SETTLE_END),
+                0.48f, 0.040f);
     }
 
     /** Positive shifts the divider down (upper-left lobe larger). */
@@ -270,27 +294,38 @@ public final class GargantuaCloudRenderer implements AutoCloseable {
             return 0.25f;
         }
         if (t < GargantuaEntity.PLANE_END) {
-            return Mth.lerp(phase(t, GargantuaEntity.EMERGE_END, GargantuaEntity.PLANE_END), 0.25f, -0.22f);
+            return Mth.lerp(phase(t, GargantuaEntity.EMERGE_END, GargantuaEntity.PLANE_END),
+                    0.25f, -0.22f);
         }
         if (t < GargantuaEntity.SWING_END) {
-            return Mth.lerp(phase(t, GargantuaEntity.PLANE_END, GargantuaEntity.SWING_END), -0.22f, -0.04f);
+            return Mth.lerp(phase(t, GargantuaEntity.PLANE_END, GargantuaEntity.SWING_END),
+                    -0.22f, -0.04f);
         }
-        return Mth.lerp(phase(t, GargantuaEntity.SWING_END, GargantuaEntity.SETTLE_END), -0.04f, 0.0f);
+        return Mth.lerp(phase(t, GargantuaEntity.SWING_END, GargantuaEntity.SETTLE_END),
+                -0.04f, 0.0f);
     }
 
     private static float rollDegAt(float t) {
-        return Mth.lerp(phase(t, GargantuaEntity.PLANE_END, GargantuaEntity.SWING_END), 24.0f, 10.0f)
-                + 0.4f * Mth.sin(t * 0.008f);
+        return Mth.lerp(phase(t, GargantuaEntity.PLANE_END, GargantuaEntity.SWING_END),
+                24.0f, 10.0f) + 0.4f * Mth.sin(t * 0.008f);
     }
 
     private static float brightnessAt(float t) {
         return Mth.lerp(phase(t, 0.0f, GargantuaEntity.SETTLE_END), 0.70f, 1.35f);
     }
 
+    private record FrameState(Vec3 center, Vec3 right, Vec3 up, float shadowRadius,
+            float materialTime, float opening, float divider, float roll,
+            float brightness, float doppler, float blaze, float opacity) {
+    }
+
     @Override
     public void close() {
         this.allocator.close();
-        this.paramsBuffer.close();
+        if (this.paramsBuffer != null) {
+            this.paramsBuffer.close();
+            this.paramsBuffer = null;
+        }
         if (this.vertexBuffer != null) {
             this.vertexBuffer.close();
             this.vertexBuffer = null;
