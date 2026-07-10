@@ -189,25 +189,27 @@ public final class GargantuaCloudRenderer implements AutoCloseable {
     }
 
     /**
-     * Build, but deliberately do not pre-register, the material pipeline. This
-     * keeps shader compilation out of the title-screen resource reload. The
-     * first Eye event compiles it on demand; failures fall back to the vanilla
-     * event horizon instead of black-screening the whole client.
+     * Register the material pipeline on first use, after the render device and
+     * title screen have initialized. Some compatibility backends do not compile
+     * an unregistered pipeline when a render pass first sees it. Delayed
+     * registration preserves that backend contract without putting Gargantua's
+     * shader into the startup resource reload.
      */
     private RenderPipeline pipeline() {
         if (this.pipeline == null) {
-            this.pipeline = RenderPipeline.builder(RenderPipelines.DEBUG_FILLED_SNIPPET)
-                    .withLocation(BlackholeMod.id("pipeline/gargantua_cloud"))
-                    .withVertexShader(BlackholeMod.id("gargantua_cloud"))
-                    .withFragmentShader(BlackholeMod.id("gargantua_cloud"))
-                    .withSampler("Sampler0")
-                    .withUniform("GargantuaParams", UniformType.UNIFORM_BUFFER)
-                    .withVertexFormat(DefaultVertexFormat.POSITION_COLOR, VertexFormat.Mode.QUADS)
-                    .withBlend(BlendFunction.ADDITIVE)
-                    .withCull(false)
-                    .withDepthWrite(false)
-                    .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
-                    .build();
+            this.pipeline = RenderPipelines.register(
+                    RenderPipeline.builder(RenderPipelines.DEBUG_FILLED_SNIPPET)
+                            .withLocation(BlackholeMod.id("pipeline/gargantua_cloud"))
+                            .withVertexShader(BlackholeMod.id("gargantua_cloud"))
+                            .withFragmentShader(BlackholeMod.id("gargantua_cloud"))
+                            .withSampler("Sampler0")
+                            .withUniform("GargantuaParams", UniformType.UNIFORM_BUFFER)
+                            .withVertexFormat(DefaultVertexFormat.POSITION_COLOR, VertexFormat.Mode.QUADS)
+                            .withBlend(BlendFunction.ADDITIVE)
+                            .withCull(false)
+                            .withDepthWrite(false)
+                            .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
+                            .build());
         }
         return this.pipeline;
     }
