@@ -95,6 +95,11 @@ void main() {
     float sr = sin(Material2.z);
     p = mat2(cr, -sr, sr, cr) * p;
 
+    float screenRadius = length(p);
+    if (screenRadius > 3.45) {
+        discard;
+    }
+
     float time = Material0.x;
     float opening = max(0.028, Material2.x);
     float divider = Material2.y;
@@ -105,7 +110,6 @@ void main() {
     vec4 directFlow = sampleFlow(diskRadius, diskAngle, time, 0.07);
     vec3 directDisk = flowEmission(diskRadius, diskAngle, directFlow);
 
-    float screenRadius = length(p);
     float shadowAA = max(fwidth(screenRadius) * 1.5, 0.0025);
     float outsideShadow = smoothstep(SHADOW_RADIUS - shadowAA,
                                      SHADOW_RADIUS + shadowAA, screenRadius);
@@ -113,15 +117,19 @@ void main() {
 
     // Gravitationally lensed image: it remaps and resamples the same baked
     // flow field rather than rebuilding a second procedural cloud volume.
-    float lensT = clamp((screenRadius - 0.80) / 0.76, 0.0, 1.0);
-    float lensRadius = mix(1.04, 2.86, lensT);
-    float lensAngle = atan(p.y, p.x) + 0.055 * sin(time * 0.075);
-    vec4 lensFlow = sampleFlow(lensRadius, lensAngle, time * 0.86, 0.41);
     float lensBand = softMask(screenRadius, 0.775, 0.84)
                    * (1.0 - softMask(screenRadius, 1.42, 1.66));
-    float polarLift = 0.34 + 0.92 * pow(abs(p.y) / max(screenRadius, 0.001), 0.72);
-    vec3 lensed = flowEmission(lensRadius, lensAngle, lensFlow)
-                * lensBand * polarLift * 0.62;
+    vec3 lensed = vec3(0.0);
+    if (lensBand > 0.0001) {
+        float lensT = clamp((screenRadius - 0.80) / 0.76, 0.0, 1.0);
+        float lensRadius = mix(1.04, 2.86, lensT);
+        float lensAngle = atan(p.y, p.x) + 0.055 * sin(time * 0.075);
+        vec4 lensFlow = sampleFlow(lensRadius, lensAngle, time * 0.86, 0.41);
+        float polarLift = 0.34
+                        + 0.92 * pow(abs(p.y) / max(screenRadius, 0.001), 0.72);
+        lensed = flowEmission(lensRadius, lensAngle, lensFlow)
+               * lensBand * polarLift * 0.62;
+    }
 
     float photonWidth = max(fwidth(screenRadius) * 1.8, 0.0030);
     float photon = 1.0 - smoothstep(photonWidth * 0.35, photonWidth * 2.7,
@@ -145,15 +153,19 @@ void main() {
     // Edge-on acts need a textured luminous divider across the shadow. One
     // strip lookup supplies persistent grains without temporal noise shimmer.
     float edgeOn = 1.0 - smoothstep(0.07, 0.24, opening);
-    float dividerWidth = mix(0.016, 0.039, smoothstep(0.0, 0.08, opening));
-    dividerWidth = max(dividerWidth, fwidth(p.y) * 1.35);
-    float dividerLine = exp(-abs(p.y + divider) / dividerWidth) * edgeOn;
-    float dividerGrain = luminance(texture(Sampler0, vec2(
-            fract(p.x * 0.085 - time * 0.018), 0.115)).rgb);
-    dividerLine *= 0.58 + 0.62 * dividerGrain;
-    dividerLine *= 1.0 - smoothstep(SHADOW_RADIUS - shadowAA,
-                                    SHADOW_RADIUS + shadowAA * 2.0, screenRadius);
-    vec3 crossing = vec3(1.45, 0.78, 0.27) * dividerLine * 1.48;
+    float dividerAA = fwidth(p.y) * 1.35;
+    vec3 crossing = vec3(0.0);
+    if (edgeOn > 0.0001 && screenRadius < SHADOW_RADIUS + shadowAA * 2.0) {
+        float dividerWidth = mix(0.016, 0.039, smoothstep(0.0, 0.08, opening));
+        dividerWidth = max(dividerWidth, dividerAA);
+        float dividerLine = exp(-abs(p.y + divider) / dividerWidth) * edgeOn;
+        float dividerGrain = luminance(texture(Sampler0, vec2(
+                fract(p.x * 0.085 - time * 0.018), 0.115)).rgb);
+        dividerLine *= 0.58 + 0.62 * dividerGrain;
+        dividerLine *= 1.0 - smoothstep(SHADOW_RADIUS - shadowAA,
+                                        SHADOW_RADIUS + shadowAA * 2.0, screenRadius);
+        crossing = vec3(1.45, 0.78, 0.27) * dividerLine * 1.48;
+    }
 
     float blazeMask = Material3.x * exp(-length(p - vec2(-0.92, 0.0)) * 1.30);
     vec3 blaze = vec3(1.0, 0.76, 0.50) * blazeMask * 0.52;
