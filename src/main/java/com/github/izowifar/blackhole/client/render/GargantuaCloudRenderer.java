@@ -6,6 +6,7 @@ import java.util.OptionalInt;
 
 import com.github.izowifar.blackhole.BlackholeMod;
 import com.github.izowifar.blackhole.entity.GargantuaEntity;
+import com.mojang.logging.LogUtils;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.buffers.Std140Builder;
@@ -29,6 +30,7 @@ import org.joml.Matrix4fc;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
 import org.lwjgl.system.MemoryUtil;
+import org.slf4j.Logger;
 
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.world.WorldExtractionContext;
@@ -49,21 +51,11 @@ import net.minecraft.world.phys.Vec3;
  * by the split renderer used by Minecraft 1.21.11.
  */
 public final class GargantuaCloudRenderer implements AutoCloseable {
+    private static final Logger LOGGER = LogUtils.getLogger();
     private static final float ELEVATION_DEG = 26.0f;
     private static final float QUAD_RADIUS = 5.32f;
-
-    private static final RenderPipeline PIPELINE = RenderPipelines.register(
-            RenderPipeline.builder(RenderPipelines.DEBUG_FILLED_SNIPPET)
-                    .withLocation(BlackholeMod.id("pipeline/gargantua_cloud"))
-                    .withVertexShader(BlackholeMod.id("gargantua_cloud"))
-                    .withFragmentShader(BlackholeMod.id("gargantua_cloud"))
-                    .withUniform("GargantuaParams", UniformType.UNIFORM_BUFFER)
-                    .withVertexFormat(DefaultVertexFormat.POSITION_COLOR, VertexFormat.Mode.QUADS)
-                    .withBlend(BlendFunction.TRANSLUCENT)
-                    .withCull(false)
-                    .withDepthWrite(false)
-                    .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
-                    .build());
+    private static final net.minecraft.resources.Identifier CLOUD_TEXTURE =
+            BlackholeMod.id("textures/misc/gargantua_strip.png");
 
     private static final Vector4f COLOR_MODULATOR = new Vector4f(1.0f, 1.0f, 1.0f, 1.0f);
     private static final Vector3f MODEL_OFFSET = new Vector3f();
@@ -75,6 +67,8 @@ public final class GargantuaCloudRenderer implements AutoCloseable {
 
     private final ByteBufferBuilder allocator = new ByteBufferBuilder(RenderType.SMALL_BUFFER_SIZE);
     private volatile FrameState frameState;
+    private RenderPipeline pipeline;
+    private boolean materialDisabled;
     private MappableRingBuffer paramsBuffer;
     private BufferBuilder buffer;
     private MappableRingBuffer vertexBuffer;
@@ -145,15 +139,28 @@ public final class GargantuaCloudRenderer implements AutoCloseable {
 
     private void render(WorldRenderContext context) {
         FrameState frame = this.frameState;
-        if (frame == null) {
+        if (frame == null || this.materialDisabled) {
             return;
         }
+
+        try {
+            renderFrame(context, frame);
+        } catch (RuntimeException exception) {
+            this.materialDisabled = true;
+            this.frameState = null;
+            LOGGER.error("Disabling Gargantua cloud material after a GPU pipeline failure; vanilla fallback remains active",
+                    exception);
+        }
+    }
+
+    private void renderFrame(WorldRenderContext context, FrameState frame) {
+        RenderPipeline pipeline = pipeline();
 
         PoseStack matrices = context.matrices();
         matrices.pushPose();
         if (this.buffer == null) {
             this.buffer = new BufferBuilder(this.allocator,
-                    PIPELINE.getVertexFormatMode(), PIPELINE.getVertexFormat());
+                    pipeline.getVertexFormatMode(), pipeline.getVertexFormat());
         }
         emitQuad(matrices.last().pose(), this.buffer, frame.center(), frame.right(), frame.up(),
                 frame.shadowRadius() * QUAD_RADIUS);
@@ -177,8 +184,32 @@ public final class GargantuaCloudRenderer implements AutoCloseable {
                     .putVec4(frame.blaze(), 1.18f, frame.opacity(), 0.0f);
         }
 
-        draw(Minecraft.getInstance(), mesh, drawState, vertices, format, params);
+        draw(Minecraft.getInstance(), mesh, drawState, vertices, format, params, pipeline);
         this.vertexBuffer.rotate();
+    }
+
+    /**
+     * Build, but deliberately do not pre-register, the material pipeline. This
+     * keeps shader compilation out of the title-screen resource reload. The
+     * first Eye event compiles it on demand; failures fall back to the vanilla
+     * event horizon instead of black-screening the whole client.
+     */
+    private RenderPipeline pipeline() {
+        if (this.pipeline == null) {
+            this.pipeline = RenderPipeline.builder(RenderPipelines.DEBUG_FILLED_SNIPPET)
+                    .withLocation(BlackholeMod.id("pipeline/gargantua_cloud"))
+                    .withVertexShader(BlackholeMod.id("gargantua_cloud"))
+                    .withFragmentShader(BlackholeMod.id("gargantua_cloud"))
+                    .withSampler("Sampler0")
+                    .withUniform("GargantuaParams", UniformType.UNIFORM_BUFFER)
+                    .withVertexFormat(DefaultVertexFormat.POSITION_COLOR, VertexFormat.Mode.QUADS)
+                    .withBlend(BlendFunction.ADDITIVE)
+                    .withCull(false)
+                    .withDepthWrite(false)
+                    .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
+                    .build();
+        }
+        return this.pipeline;
     }
 
     /** Create GPU state only after Minecraft has initialized its render device. */
@@ -213,35 +244,41 @@ public final class GargantuaCloudRenderer implements AutoCloseable {
     }
 
     private void draw(Minecraft client, MeshData mesh, MeshData.DrawState drawState,
-            GpuBuffer vertices, VertexFormat format, MappableRingBuffer params) {
+            GpuBuffer vertices, VertexFormat format, MappableRingBuffer params,
+            RenderPipeline pipeline) {
         GpuBuffer indices;
         VertexFormat.IndexType indexType;
-        if (PIPELINE.getVertexFormatMode() == VertexFormat.Mode.QUADS) {
+        if (pipeline.getVertexFormatMode() == VertexFormat.Mode.QUADS) {
             mesh.sortQuads(this.allocator, RenderSystem.getProjectionType().vertexSorting());
-            indices = PIPELINE.getVertexFormat().uploadImmediateIndexBuffer(mesh.indexBuffer());
+            indices = pipeline.getVertexFormat().uploadImmediateIndexBuffer(mesh.indexBuffer());
             indexType = mesh.drawState().indexType();
         } else {
             RenderSystem.AutoStorageIndexBuffer sequential =
-                    RenderSystem.getSequentialBuffer(PIPELINE.getVertexFormatMode());
+                    RenderSystem.getSequentialBuffer(pipeline.getVertexFormatMode());
             indices = sequential.getBuffer(drawState.indexCount());
             indexType = sequential.type();
         }
 
         GpuBufferSlice transforms = RenderSystem.getDynamicUniforms().writeTransform(
                 RenderSystem.getModelViewMatrix(), COLOR_MODULATOR, MODEL_OFFSET, TEXTURE_MATRIX);
-        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                () -> "blackhole gargantua cloud pass",
-                client.getMainRenderTarget().getColorTextureView(), OptionalInt.empty(),
-                client.getMainRenderTarget().getDepthTextureView(), OptionalDouble.empty())) {
-            pass.setPipeline(PIPELINE);
-            RenderSystem.bindDefaultUniforms(pass);
-            pass.setUniform("DynamicTransforms", transforms);
-            pass.setUniform("GargantuaParams", params.currentBuffer());
-            pass.setVertexBuffer(0, vertices);
-            pass.setIndexBuffer(indices, indexType);
-            pass.drawIndexed(0 / format.getVertexSize(), 0, drawState.indexCount(), 1);
+        try {
+            try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+                    () -> "blackhole gargantua cloud pass",
+                    client.getMainRenderTarget().getColorTextureView(), OptionalInt.empty(),
+                    client.getMainRenderTarget().getDepthTextureView(), OptionalDouble.empty())) {
+                var texture = client.getTextureManager().getTexture(CLOUD_TEXTURE);
+                pass.setPipeline(pipeline);
+                RenderSystem.bindDefaultUniforms(pass);
+                pass.bindTexture("Sampler0", texture.getTextureView(), texture.getSampler());
+                pass.setUniform("DynamicTransforms", transforms);
+                pass.setUniform("GargantuaParams", params.currentBuffer());
+                pass.setVertexBuffer(0, vertices);
+                pass.setIndexBuffer(indices, indexType);
+                pass.drawIndexed(0 / format.getVertexSize(), 0, drawState.indexCount(), 1);
+            }
+        } finally {
+            mesh.close();
         }
-        mesh.close();
     }
 
     private static void emitQuad(Matrix4fc matrix, BufferBuilder builder, Vec3 center,
