@@ -118,20 +118,6 @@ public class GargantuaRenderer extends EntityRenderer<GargantuaEntity, Gargantua
         float doppler = dopplerAmpAt(t);
         float blaze = blazeAt(t);
         float flash = flashAlphaAt(t);
-        float darkness = darknessAt(t);
-
-        // 0. sky-darkening dome centered on the camera, farther out than the
-        // hole so depth keeps every other layer visible in front of it; only
-        // the sky and the far horizon fall into night
-        if (darkness > 0.003f) {
-            int domeAlpha = (int) (255 * Math.min(1.0f, darkness));
-            float domeRadius = dist * 1.15f;
-            poseStack.pushPose();
-            poseStack.translate(camPos.x - state.anchorX, camPos.y - state.anchorY, camPos.z - state.anchorZ);
-            collector.submitCustomGeometry(poseStack, RenderTypes.entityTranslucentEmissive(WHITE_TEXTURE),
-                    (pose, vc) -> emitSphere(pose, vc, domeRadius, 2, 3, 8, domeAlpha));
-            poseStack.popPose();
-        }
 
         poseStack.pushPose();
         poseStack.translate(anchor.x - state.anchorX, anchor.y - state.anchorY, anchor.z - state.anchorZ);
@@ -214,40 +200,49 @@ public class GargantuaRenderer extends EntityRenderer<GargantuaEntity, Gargantua
         return p * p * (3.0f - 2.0f * p);
     }
 
+    /**
+     * The ring's crossing line sits below the shadow center for positive tilt
+     * (upper-left lobe bigger) and above it for negative tilt (lower-right
+     * lobe bigger). The flat phase sweeps +20 to -16 to swap the lobes, the
+     * swing phase rotates back through edge-on while the hole zooms in, and
+     * the settle phase eases to nearly 0 so the ring bisects the shadow.
+     */
     private static float tiltDegAt(float t) {
-        return Mth.lerp(phase(t, GargantuaEntity.EMERGE_END * 0.5f, GargantuaEntity.DOMINANCE_END), 22.0f, 4.0f);
+        if (t < GargantuaEntity.EMERGE_END) {
+            return 20.0f;
+        }
+        if (t < GargantuaEntity.PLANE_END) {
+            return Mth.lerp(phase(t, GargantuaEntity.EMERGE_END, GargantuaEntity.PLANE_END), 20.0f, -16.0f);
+        }
+        if (t < GargantuaEntity.SWING_END) {
+            return Mth.lerp(phase(t, GargantuaEntity.PLANE_END, GargantuaEntity.SWING_END), -16.0f, 18.0f);
+        }
+        return Mth.lerp(phase(t, GargantuaEntity.SWING_END, GargantuaEntity.SETTLE_END), 18.0f, 1.5f);
     }
 
     private static float rollDegAt(float t) {
-        return Mth.lerp(phase(t, 0, GargantuaEntity.LIFETIME), -14.0f, 6.0f)
-                + 0.6f * Mth.sin(t * 0.008f);
+        return Mth.lerp(phase(t, GargantuaEntity.PLANE_END, GargantuaEntity.SWING_END), 24.0f, 10.0f)
+                + 0.4f * Mth.sin(t * 0.008f);
     }
 
     private static float brightnessAt(float t) {
-        return Mth.lerp(phase(t, 0, GargantuaEntity.DOMINANCE_END), 0.55f, 1.35f);
+        return Mth.lerp(phase(t, 0, GargantuaEntity.SETTLE_END), 0.70f, 1.35f);
     }
 
     private static float dopplerAmpAt(float t) {
-        return Mth.lerp(phase(t, GargantuaEntity.EMERGE_END, GargantuaEntity.DOMINANCE_END), 0.35f, 0.85f);
+        return Mth.lerp(phase(t, GargantuaEntity.EMERGE_END, GargantuaEntity.SETTLE_END - 50.0f), 0.40f, 0.85f);
     }
 
     private static float blazeAt(float t) {
-        return phase(t, 700.0f, GargantuaEntity.FLASH_PEAK);
-    }
-
-    private static float darknessAt(float t) {
-        float in = phase(t, 40.0f, GargantuaEntity.APPROACH_END * 0.6f) * 0.72f
-                + phase(t, GargantuaEntity.APPROACH_END, GargantuaEntity.DOMINANCE_END) * 0.13f;
-        float out = 1.0f - phase(t, GargantuaEntity.FLASH_PEAK + 20.0f, GargantuaEntity.LIFETIME);
-        return in * out;
+        return phase(t, 500.0f, GargantuaEntity.FLASH_PEAK);
     }
 
     private static float flashAlphaAt(float t) {
-        if (t < GargantuaEntity.DOMINANCE_END) {
+        if (t < GargantuaEntity.SETTLE_END) {
             return 0.0f;
         }
         if (t <= GargantuaEntity.FLASH_PEAK) {
-            return phase(t, GargantuaEntity.DOMINANCE_END, GargantuaEntity.FLASH_PEAK);
+            return phase(t, GargantuaEntity.SETTLE_END, GargantuaEntity.FLASH_PEAK);
         }
         if (t <= GargantuaEntity.FLASH_PEAK + 20) {
             return 1.0f;
