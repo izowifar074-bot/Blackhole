@@ -263,12 +263,14 @@ public final class GargantuaCloudRenderer implements AutoCloseable {
 
         GpuBufferSlice transforms = RenderSystem.getDynamicUniforms().writeTransform(
                 RenderSystem.getModelViewMatrix(), COLOR_MODULATOR, MODEL_OFFSET, TEXTURE_MATRIX);
+        // The first lookup may upload the texture. Backends reject that GPU command
+        // while this renderer's pass is open, so resolve it before creating the pass.
+        var texture = client.getTextureManager().getTexture(CLOUD_TEXTURE);
         try {
             try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
                     () -> "blackhole gargantua cloud pass",
                     client.getMainRenderTarget().getColorTextureView(), OptionalInt.empty(),
                     client.getMainRenderTarget().getDepthTextureView(), OptionalDouble.empty())) {
-                var texture = client.getTextureManager().getTexture(CLOUD_TEXTURE);
                 pass.setPipeline(pipeline);
                 RenderSystem.bindDefaultUniforms(pass);
                 pass.bindTexture("Sampler0", texture.getTextureView(), texture.getSampler());
